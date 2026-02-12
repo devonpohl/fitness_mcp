@@ -45,30 +45,25 @@ AUTH_TOKEN = os.environ.get("MCP_AUTH_TOKEN", "")
 
 
 # ---------------------------------------------------------------------------
-# 3. Auth middleware  (skipped if AUTH_TOKEN is empty → authless mode)
+# 3. Auth middleware
+#    Only gates /backup and /restore (admin endpoints).
+#    The MCP endpoint (/mcp) and protocol discovery (HEAD /) run authless
+#    because Claude's Custom Connector doesn't support bearer tokens —
+#    it only does OAuth or no-auth.
 # ---------------------------------------------------------------------------
+PROTECTED_PATHS = {"/backup", "/restore"}
+
+
 class BearerAuthMiddleware(BaseHTTPMiddleware):
     """
-    Lightweight bearer-token gate.  If MCP_AUTH_TOKEN is set, every request
-    except the protocol-discovery HEAD must carry
-        Authorization: Bearer <token>
-    Claude's Custom Connector "Advanced settings" lets you supply a static
-    token, so this is the simplest auth path that still locks the door.
+    Bearer-token gate for admin endpoints only.
+    /mcp, HEAD /, and /health pass through without auth.
     """
 
     async def dispatch(self, request: Request, call_next):
-        # Always let HEAD through — Claude uses it for protocol discovery
-        if request.method == "HEAD":
-            return await call_next(request)
-
-        # Health-check endpoint is unauthenticated
-        if request.url.path == "/health":
-            return await call_next(request)
-
-        if AUTH_TOKEN:
+        if AUTH_TOKEN and request.url.path in PROTECTED_PATHS:
             auth = request.headers.get("authorization", "")
             expected = f"Bearer {AUTH_TOKEN}"
-            # constant-time compare to avoid timing attacks
             if not hmac.compare_digest(auth, expected):
                 return JSONResponse(
                     {"error": "unauthorized"},
