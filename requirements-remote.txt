@@ -1,0 +1,11 @@
+# Core MCP + HTTP transport
+mcp[cli]>=1.8.0
+pydantic>=2.0.0
+
+# ASGI server
+uvicorn[standard]>=0.30.0
+starlette>=0.40.0
+
+# Google Calendar (optional — remove if you don't need calendar sync remotely)
+# google-auth-oauthlib>=1.0.0
+# google-api-python-client>=2.100.0
