@@ -17,6 +17,8 @@ from starlette.requests import Request
 from starlette.responses import Response, JSONResponse, FileResponse
 from starlette.routing import Route
 
+from mcp.server.transport_security import TransportSecuritySettings
+
 # ---------------------------------------------------------------------------
 # 1. Import the existing MCP server instance
 # ---------------------------------------------------------------------------
@@ -31,6 +33,18 @@ mcp = _fm.mcp
 PORT = int(os.environ.get("PORT", 8000))
 HOST = os.environ.get("HOST", "0.0.0.0")
 AUTH_TOKEN = os.environ.get("MCP_AUTH_TOKEN", "")
+
+# Railway domain for DNS rebinding protection whitelist.
+# Set MCP_ALLOWED_HOST in Railway env vars to your public domain.
+ALLOWED_HOST = os.environ.get(
+    "MCP_ALLOWED_HOST", "fitnessmcp-production.up.railway.app"
+)
+
+transport_security = TransportSecuritySettings(
+    allowed_hosts=[ALLOWED_HOST, f"{ALLOWED_HOST}:*"],
+    allowed_origins=[f"https://{ALLOWED_HOST}"],
+    enable_dns_rebinding_protection=True,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +141,7 @@ async def restore_db(request: Request) -> Response:
 #
 #    We prepend our routes so they match before the MCP catch-all.
 # ---------------------------------------------------------------------------
-app = mcp.streamable_http_app()
+app = mcp.streamable_http_app(transport_security=transport_security)
 
 # Prepend our custom routes (before the MCP /mcp route)
 for route in reversed([
