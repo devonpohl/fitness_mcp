@@ -31,7 +31,25 @@ except ImportError:
     GOOGLE_CALENDAR_AVAILABLE = False
 
 # Initialize the MCP server
-mcp = FastMCP("fitness_mcp")
+# When MCP_ALLOWED_HOST is set (production deploy behind a proxy), configure
+# transport security to accept that hostname. Without this, the SDK's DNS
+# rebinding protection rejects non-localhost Host headers with a 421.
+_allowed_host = os.environ.get("MCP_ALLOWED_HOST")
+if _allowed_host:
+    try:
+        from mcp.server.transport_security import TransportSecuritySettings
+        mcp = FastMCP(
+            "fitness_mcp",
+            transport_security=TransportSecuritySettings(
+                allowed_hosts=[_allowed_host, f"{_allowed_host}:*"],
+                allowed_origins=[f"https://{_allowed_host}"],
+            ),
+        )
+    except (ImportError, TypeError):
+        # Older SDK without transport_security support — fall back
+        mcp = FastMCP("fitness_mcp")
+else:
+    mcp = FastMCP("fitness_mcp")
 
 # Database path — use DB_PATH env var if set (for remote deploy with
 # persistent volume at /data), otherwise default to local home directory.
