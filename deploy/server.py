@@ -127,9 +127,12 @@ async def restore_db(request: Request) -> Response:
 #
 #    We prepend our routes so they match before the MCP catch-all.
 # ---------------------------------------------------------------------------
-app = mcp.streamable_http_app()
+# Serve MCP at "/" — Claude's Custom Connector expects the MCP endpoint
+# at root, not at /mcp.  The SDK defaults to /mcp, so we override here.
+app = mcp.streamable_http_app(path="/")
 
-# Prepend our custom routes (before the MCP /mcp route)
+# Prepend our custom routes (HEAD / for protocol discovery goes first
+# so it matches before the MCP catch-all route at /)
 for route in reversed([
     Route("/", head_root, methods=["HEAD"]),
     Route("/health", health, methods=["GET"]),
