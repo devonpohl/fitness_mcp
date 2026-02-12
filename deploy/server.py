@@ -130,13 +130,13 @@ async def restore_db(request: Request) -> Response:
 app = mcp.streamable_http_app()
 
 # Prepend our custom routes (before the MCP /mcp route)
-custom_routes = [
+for route in reversed([
     Route("/", head_root, methods=["HEAD"]),
     Route("/health", health, methods=["GET"]),
     Route("/backup", backup_db, methods=["GET"]),
     Route("/restore", restore_db, methods=["POST"]),
-]
-app.routes = custom_routes + list(app.routes)
+]):
+    app.router.routes.insert(0, route)
 
 # Add auth middleware
 if AUTH_TOKEN:
