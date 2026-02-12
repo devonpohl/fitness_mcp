@@ -121,7 +121,64 @@ async def backup_db(request: Request) -> Response:
 
 
 # ---------------------------------------------------------------------------
-# 6. Assemble the ASGI app
+# 6. Database restore endpoint
+#    POST /restore → replaces the SQLite DB with an uploaded file.
+#    Auth-gated like everything else.
+#
+#    Usage from your laptop:
+#      curl -X POST -H "Authorization: Bearer $TOKEN" \
+#           -F "file=@~/.fitness_tracker/fitness.db" \
+#           https://your-app.up.railway.app/restore
+# ---------------------------------------------------------------------------
+async def restore_db(request: Request) -> Response:
+    import shutil
+    import tempfile
+
+    db_path = os.environ.get("DB_PATH", _fm.DB_PATH)
+
+    # Parse multipart form upload
+    form = await request.form()
+    upload = form.get("file")
+    if upload is None:
+        return JSONResponse(
+            {"error": "no file provided — use: curl -F 'file=@path/to/fitness.db'"},
+            status_code=400,
+        )
+
+    # Write to a temp file first, then atomically replace.
+    # This avoids corrupting the DB if the upload is interrupted.
+    tmp_fd, tmp_path = tempfile.mkstemp(
+        suffix=".db", dir=os.path.dirname(db_path)
+    )
+    try:
+        with os.fdopen(tmp_fd, "wb") as tmp:
+            contents = await upload.read()
+            tmp.write(contents)
+
+        # Basic sanity check: SQLite files start with "SQLite format 3\000"
+        if not contents[:16].startswith(b"SQLite format 3"):
+            os.unlink(tmp_path)
+            return JSONResponse(
+                {"error": "uploaded file is not a valid SQLite database"},
+                status_code=400,
+            )
+
+        # Atomic replace
+        shutil.move(tmp_path, db_path)
+    except Exception as e:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+    size_kb = len(contents) / 1024
+    return JSONResponse({
+        "status": "restored",
+        "size_kb": round(size_kb, 1),
+    })
+
+
+# ---------------------------------------------------------------------------
+# 8. Assemble the ASGI app
 #    FastMCP.streamable_http_app() returns a Starlette/ASGI sub-application
 #    that handles POST /mcp (the actual MCP RPC endpoint).
 #    We mount it at "/" so the full path is just "/mcp".
@@ -141,6 +198,7 @@ app = Starlette(
         Route("/", head_root, methods=["HEAD"]),
         Route("/health", health, methods=["GET"]),
         Route("/backup", backup_db, methods=["GET"]),
+        Route("/restore", restore_db, methods=["POST"]),
         Mount("/", app=mcp_app),   # delegates /mcp to the SDK handler
     ],
     middleware=middleware,
@@ -148,7 +206,7 @@ app = Starlette(
 
 
 # ---------------------------------------------------------------------------
-# 7. Dev entry point  (production uses `uvicorn deploy.server:app`)
+# 9. Dev entry point  (production uses `uvicorn deploy.server:app`)
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     import uvicorn
