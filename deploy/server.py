@@ -39,6 +39,17 @@ AUTH_TOKEN = os.environ.get("MCP_AUTH_TOKEN", "")
 PROTECTED_PATHS = {"/backup", "/restore"}
 
 
+class PathRewriteMiddleware(BaseHTTPMiddleware):
+    """Rewrite POST/GET/DELETE on / to /mcp.
+    Claude's Custom Connector POSTs to root, but the MCP SDK serves at /mcp.
+    HEAD stays at / for our protocol-discovery handler."""
+
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path == "/" and request.method in ("POST", "GET", "DELETE"):
+            request.scope["path"] = "/mcp"
+        return await call_next(request)
+
+
 class BearerAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if AUTH_TOKEN and request.url.path in PROTECTED_PATHS:
@@ -127,9 +138,7 @@ async def restore_db(request: Request) -> Response:
 #
 #    We prepend our routes so they match before the MCP catch-all.
 # ---------------------------------------------------------------------------
-# Serve MCP at "/" — Claude's Custom Connector expects the MCP endpoint
-# at root, not at /mcp.  The SDK defaults to /mcp, so we override here.
-app = mcp.streamable_http_app(path="/")
+app = mcp.streamable_http_app()
 
 # Prepend our custom routes (HEAD / for protocol discovery goes first
 # so it matches before the MCP catch-all route at /)
@@ -141,9 +150,10 @@ for route in reversed([
 ]):
     app.router.routes.insert(0, route)
 
-# Add auth middleware
+# Middleware (Starlette runs last-added first)
 if AUTH_TOKEN:
     app.add_middleware(BearerAuthMiddleware)
+app.add_middleware(PathRewriteMiddleware)
 
 
 # ---------------------------------------------------------------------------
