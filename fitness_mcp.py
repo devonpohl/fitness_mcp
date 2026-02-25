@@ -1525,12 +1525,18 @@ async def fitness_get_lift_history(params: GetLiftHistoryInput) -> str:
         
         history = cursor.fetchall()
         
-        # Get PR
+        # Derive PR from workouts table
         cursor.execute("""
-            SELECT MAX(weight) as pr, date FROM lift_prs
-            WHERE lift_name LIKE ?
+            SELECT MAX(CAST(result_display AS REAL)) as pr, date
+            FROM workouts
+            WHERE barbell_lift LIKE ?
+              AND score_type = 'Load'
+              AND result_display IS NOT NULL
+              AND result_display != ''
+            ORDER BY CAST(result_display AS REAL) DESC
+            LIMIT 1
         """, (f"%{params.lift_name}%",))
-        
+
         pr_row = cursor.fetchone()
     
     if params.response_format == ResponseFormat.JSON:
@@ -1576,44 +1582,59 @@ class GetPRsInput(BaseModel):
 )
 async def fitness_get_prs(params: GetPRsInput) -> str:
     """Get all personal records.
-    
-    Returns your PR board showing best lifts across all movements.
-    
+
+    Derives PRs dynamically from workout logs rather than a static table.
+    Looks at all workouts with a barbell_lift and score_type='Load' and
+    returns the max weight recorded for each lift.
+
     Args:
         params: GetPRsInput with format preference
-        
+
     Returns:
         str: PR board
     """
     with get_db() as conn:
         cursor = conn.cursor()
-        
+
+        # Derive PRs from workouts table — single source of truth
         cursor.execute("""
-            SELECT lp.lift_name, lp.weight as pr, lp.date
-            FROM lift_prs lp
+            SELECT w.barbell_lift as lift_name,
+                   CAST(w.result_display AS REAL) as pr,
+                   w.date
+            FROM workouts w
             INNER JOIN (
-                SELECT lift_name, MAX(weight) as max_weight
-                FROM lift_prs
-                GROUP BY lift_name
-            ) max_prs ON lp.lift_name = max_prs.lift_name AND lp.weight = max_prs.max_weight
-            GROUP BY lp.lift_name
-            ORDER BY lp.lift_name
+                SELECT barbell_lift, MAX(CAST(result_display AS REAL)) as max_weight
+                FROM workouts
+                WHERE barbell_lift IS NOT NULL
+                  AND barbell_lift != ''
+                  AND score_type = 'Load'
+                  AND result_display IS NOT NULL
+                  AND result_display != ''
+                GROUP BY barbell_lift
+            ) best ON w.barbell_lift = best.barbell_lift
+                  AND CAST(w.result_display AS REAL) = best.max_weight
+            WHERE w.score_type = 'Load'
+            GROUP BY w.barbell_lift
+            ORDER BY w.barbell_lift
         """)
-        
+
         prs = cursor.fetchall()
-    
+
     if params.response_format == ResponseFormat.JSON:
         return json.dumps([dict(p) for p in prs], indent=2)
-    
+
     result = "## 🏆 Personal Records\n\n"
-    
+
     if prs:
         result += "| Lift | PR | Date |\n|------|-----|------|\n"
         for p in prs:
-            result += f"| {p['lift_name']} | {p['pr']} lbs | {p['date']} |\n"
+            weight = p['pr']
+            # Display as int if it's a whole number
+            weight_str = f"{int(weight)}" if weight == int(weight) else f"{weight}"
+            result += f"| {p['lift_name']} | {weight_str} lbs | {p['date']} |\n"
     else:
         result += "No PRs recorded yet. Start lifting!\n"
-    
+
     return result
 
 
@@ -1691,10 +1712,17 @@ async def fitness_weekly_review(params: WeeklyReviewInput) -> str:
         """, (start_date.isoformat(), end_date.isoformat()))
         mobility = cursor.fetchone()
         
-        # Recent PRs
+        # Recent PRs — derived from workouts marked as PR
         cursor.execute("""
-            SELECT lift_name, weight, date FROM lift_prs
+            SELECT barbell_lift as lift_name,
+                   CAST(result_display AS REAL) as weight,
+                   date
+            FROM workouts
             WHERE date >= ? AND date <= ?
+              AND is_pr = 1
+              AND barbell_lift IS NOT NULL
+              AND barbell_lift != ''
+              AND score_type = 'Load'
             ORDER BY date DESC
         """, (start_date.isoformat(), end_date.isoformat()))
         recent_prs = cursor.fetchall()
